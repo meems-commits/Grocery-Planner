@@ -1120,7 +1120,14 @@ document.addEventListener('submit', (ev) => {
 });
 $('#settingsBtn').addEventListener('click', settingsSheet);
 
-if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController && !reloaded) { reloaded = true; location.reload(); }
+  });
+}
 
 update((s) => {
   const wf = s.stores.find((x) => x.id === 'wf');
