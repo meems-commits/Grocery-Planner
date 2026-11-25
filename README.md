@@ -28,8 +28,10 @@ Data is stored on each device (no server, no account). Use Settings → **Export
 
 ```sh
 pip install openpyxl
-python3 scripts/import_spreadsheet.py grocery_delivery_comparisonv4.xlsx -o grocery-planner-import.json
+python3 scripts/import_spreadsheet.py grocery_delivery_comparisonv4.xlsx -o grocery-planner-import.json --member wf
 ```
+
+`--member wf` marks stores where you have a delivery membership (repeat it for more stores).
 
 ## Development
 
