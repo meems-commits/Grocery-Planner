@@ -1042,3 +1042,28 @@ $('#settingsBtn').addEventListener('click', settingsSheet);
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 
 render();
+importFromLink();
+
+// A setup link like  …/#import=<deflate-raw + base64url JSON>  carries a backup inside the
+// URL fragment, which browsers never send to the server, so personal data stays out of hosting.
+async function importFromLink() {
+  const m = location.hash.match(/^#import=([A-Za-z0-9_-]+)$/);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  try {
+    const b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+    const bytes = Uint8Array.from(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)), (c) => c.charCodeAt(0));
+    const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+    const data = JSON.parse(text);
+    if (!Array.isArray(data.items)) throw new Error('bad data');
+    const have = getState().items.length;
+    if (!confirm(`Load your grocery data (${data.items.length} items, ${data.prices.length} prices)?${have ? ' This replaces what is in the app now.' : ''}`)) return;
+    const key = getState().settings.apiKey;
+    replaceState({ ...data, settings: { ...data.settings, apiKey: key } });
+    tab = 'prices';
+    render();
+    toast('Your data is loaded');
+  } catch (e) {
+    toast('That setup link could not be read');
+  }
+}

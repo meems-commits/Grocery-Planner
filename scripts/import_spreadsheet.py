@@ -9,6 +9,7 @@ Sheets read: Cart Comparison, Giant Matches, Giant Receipts, Whole Foods Receipt
 Requires: openpyxl
 """
 import argparse
+import base64
 import json
 import random
 import re
@@ -82,6 +83,9 @@ def main():
     ap.add_argument("-o", "--out", default="grocery-planner-import.json")
     ap.add_argument("--member", action="append", default=[], choices=["wf", "aldi", "giant"],
                     help="store where you have a delivery membership (repeatable)")
+    ap.add_argument("--link", metavar="APP_URL",
+                    help="also print a setup link (APP_URL#import=...) that loads the data when opened; "
+                         "the data rides in the URL fragment, which is never sent to the server")
     a = ap.parse_args()
 
     wb = openpyxl.load_workbook(a.xlsx, data_only=True)
@@ -288,6 +292,10 @@ def main():
     }
     with open(a.out, "w") as f:
         json.dump(state, f, indent=1)
+    if a.link:
+        comp = __import__("zlib").compressobj(9, __import__("zlib").DEFLATED, -15)
+        raw = comp.compress(json.dumps(state, separators=(",", ":")).encode()) + comp.flush()
+        print(a.link.split("#")[0] + "#import=" + base64.urlsafe_b64encode(raw).decode().rstrip("="))
     multi = sum(1 for i in items if len({p["storeId"] for p in prices if p["itemId"] == i["id"]}) > 1)
     print(f"{len(items)} items, {len(prices)} prices, {multi} items priced at 2+ stores -> {a.out}", file=sys.stderr)
 

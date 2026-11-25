@@ -12,7 +12,7 @@ A phone-friendly grocery budgeting app (installable to your home screen) that re
 
 ## Use it on your phone
 
-1. Publish with GitHub Pages: repo **Settings → Pages → Source: GitHub Actions**. The included workflow deploys on every push to `main`.
+1. Publish with GitHub Pages (public repo, or a paid plan for private): repo **Settings → Pages → Source: GitHub Actions**. The included workflow deploys on every push to the default branch.
 2. Open the Pages URL on your phone → Share → **Add to Home Screen**.
 3. Gear icon → paste an Anthropic API key (from console.anthropic.com) and your ZIP code. The key stays on that phone and is sent only to Anthropic. Price comparison, lists, pantry and recipes work without a key; only receipt reading, deal search and recipe ideas use it.
 
@@ -30,6 +30,8 @@ Data is stored on each device (no server, no account). Use Settings → **Export
 pip install openpyxl
 python3 scripts/import_spreadsheet.py grocery_delivery_comparisonv4.xlsx -o grocery-planner-import.json --member wf
 ```
+
+Add `--link https://<user>.github.io/Grocery-Planner/` to also print a setup link: opening it on a phone loads the data straight into the app. The data travels in the link's `#fragment`, which browsers never send to the web server, so it isn't stored by the host. Treat the link itself as private.
 
 `--member wf` marks stores where you have a delivery membership (repeat it for more stores).
 
