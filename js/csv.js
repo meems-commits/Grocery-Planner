@@ -1,5 +1,5 @@
 // CSV import so an existing Excel price sheet can be brought over.
-import { uid, today, ensureItem, storeByName, CATEGORIES } from './store.js';
+import { uid, today, ensureItem, storeByName, CATEGORIES, categorize } from './store.js';
 import { normUnit } from './units.js';
 
 export function parseCSV(text) {
@@ -66,7 +66,7 @@ export function importPriceRows(s, rows) {
     const unit = normUnit(col.unit != null ? r[col.unit] : 'ea');
     const qty = (col.qty != null && num(r[col.qty])) || 1;
     const catRaw = col.category != null ? r[col.category]?.trim() : '';
-    const category = CATEGORIES.find((c) => c.toLowerCase() === (catRaw || '').toLowerCase()) || 'Other';
+    const category = CATEGORIES.find((c) => c.toLowerCase() === (catRaw || '').toLowerCase()) || categorize(name, catRaw);
     const date = toDate(col.date != null ? r[col.date] : '');
     const sale = col.sale != null && /^(y|yes|true|1|x|sale)$/i.test((r[col.sale] || '').trim());
     const pairs = [];

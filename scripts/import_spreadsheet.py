@@ -40,30 +40,24 @@ def unit_of(u):
     return {"each": "ea", "": "ea", "ct": "ct", "oz": "oz", "lb": "lb", "fl oz": "fl oz"}.get(u, u or "ea")
 
 
-CATEGORY_WORDS = [
-    ("Baby", ["baby", "toddler", "pouch"]),
-    ("Household", ["soap", "detergent"]),
-    ("Meat & Seafood", ["chicken", "pork", "beef", "turkey", "salmon"]),
-    ("Dairy & Eggs", ["cheese", "butter", "yogurt", "eggs", "milk", "mayonnaise"]),
-    ("Cereal & Breakfast", ["cereal", "oats", "cheerios", "o's", "pancake", "flapjack"]),
-    ("Snacks", ["cups", "wafer", "snack", "chocolate"]),
-    ("Frozen", ["frozen"]),
-    ("Bakery", ["bread", "sourdough", "loaf"]),
-    ("Produce", ["banana", "apple", "pear", "plum", "avocado", "potato", "onion", "spinach", "clementine",
-                 "beet", "squash", "blueberr", "raspberr", "carrot"]),
-    ("Pantry", ["beans", "peanut butter", "tomatoes", "sugar", "flour", "starch", "pumpkin", "canned", "protein",
-                "paprika", "broth", "cinnamon", "tofu", "peach", "mandarin"]),
+# Same rules as categorize() in js/store.js: first match wins.
+CATEGORY_RULES = [
+    ("Household Cleaning", r"\b(soap|detergent|dishwasher|laundry|paper towels?|toilet paper|foil|plastic wrap|trash bags?|sponges?|wipes|cleaner|bleach|napkins?|tissues?|scrub)\b"),
+    ("Pantry", r"\b(canned|can|pouch|snacks?|powder|broth|stock|peanut butter|chocolate|wafers?|candy|cereal|oats|flour|sugar|starch|spice|paprika|cinnamon|salt|pepper|mayonnaise|mayo|sauce|pasta|spaghetti|rice|beans|bread|loaf|sourdough|bagels?|crackers|chips|honey|oil|vinegar|coffee|tea)\b"),
+    ("Meats", r"\b(chicken|pork|beef|turkey|ham|bacon|sausages?|salmon|shrimp|fish|cod|tuna steak|tenderloin|steak|lamb|bison|ground meat|meatballs?|deli meat)\b"),
+    ("Refrigerated", r"\b(milk|oatmilk|yogurt|cheese|butter|eggs?|cream|creamer|tofu|tempeh|hummus|juice|frozen|ice cream|kefir|cottage|sour cream|tortillas?)\b"),
+    ("Produce", r"\b(apples?|bananas?|pears?|plums?|avocados?|potato(es)?|onions?|garlic|spinach|lettuce|kale|squash|beets?|carrots?|berries|blueberries|raspberries|strawberries|grapes|lemons?|limes?|oranges?|clementines?|mandarins?|peppers?|tomato(es)?|cucumbers?|broccoli|cauliflower|celery|herbs?|cilantro|parsley|mushrooms?|zucchini|corn|peach(es)?|melon|mango(es)?)\b"),
 ]
+HINT = {"Produce": "Produce", "Meat": "Meats", "Dairy": "Refrigerated", "Dairy alt": "Refrigerated", "Frozen": "Refrigerated",
+        "Household": "Household Cleaning"}
 
 
 def category_of(name, hint=None):
     n = name.lower()
-    for cat, words in CATEGORY_WORDS:
-        if any(w in n for w in words):
+    for cat, pattern in CATEGORY_RULES:
+        if re.search(pattern, n):
             return cat
-    return {"Produce": "Produce", "Meat": "Meat & Seafood", "Dairy": "Dairy & Eggs", "Dairy alt": "Dairy & Eggs",
-            "Pantry": "Pantry", "Household": "Household", "Bakery": "Bakery", "Baby": "Baby",
-            "Snacks": "Snacks", "Frozen": "Frozen"}.get(hint or "", "Other")
+    return HINT.get(hint or "", "Pantry")
 
 
 def size_from_name(name):
@@ -296,7 +290,7 @@ def main():
         "items": items,
         "prices": prices,
         "pantry": [], "recipes": [], "list": [], "deals": [],
-        "settings": {"apiKey": "", "zip": "", "mode": "store", "extraStopCost": 3, "tip": 0, "ordersPerMonth": 4},
+        "settings": {"apiKey": "", "zip": "", "mode": "store", "extraStopCost": 3, "tip": 0, "ordersPerMonth": 4, "catVersion": 3},
     }
     with open(a.out, "w") as f:
         json.dump(state, f, indent=1)

@@ -4,7 +4,46 @@ const KEY = 'grocery-planner-v1';
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 export const today = () => new Date().toISOString().slice(0, 10);
 
-export const CATEGORIES = ['Produce', 'Dairy & Eggs', 'Meat & Seafood', 'Bakery', 'Pantry', 'Cereal & Breakfast', 'Snacks', 'Frozen', 'Beverages', 'Household', 'Personal Care', 'Baby', 'Other'];
+export const CATEGORIES = ['Produce', 'Meats', 'Refrigerated', 'Pantry', 'Household Cleaning'];
+
+// Name-based rules, checked in order. First match wins.
+const CATEGORY_RULES = [
+  ['Household Cleaning', /\b(soap|detergent|dishwasher|laundry|paper towels?|toilet paper|foil|plastic wrap|trash bags?|sponges?|wipes|cleaner|bleach|napkins?|tissues?|scrub)\b/],
+  ['Pantry', /\b(canned|can|pouch|snacks?|powder|broth|stock|peanut butter|chocolate|wafers?|candy|cereal|oats|flour|sugar|starch|spice|paprika|cinnamon|salt|pepper|mayonnaise|mayo|sauce|pasta|spaghetti|rice|beans|bread|loaf|sourdough|bagels?|crackers|chips|honey|oil|vinegar|coffee|tea)\b/],
+  ['Meats', /\b(chicken|pork|beef|turkey|ham|bacon|sausages?|salmon|shrimp|fish|cod|tuna steak|tenderloin|steak|lamb|bison|ground meat|meatballs?|deli meat)\b/],
+  ['Refrigerated', /\b(milk|oatmilk|yogurt|cheese|butter|eggs?|cream|creamer|tofu|tempeh|hummus|juice|frozen|ice cream|kefir|cottage|sour cream|tortillas?)\b/],
+  ['Produce', /\b(apples?|bananas?|pears?|plums?|avocados?|potato(es)?|onions?|garlic|spinach|lettuce|kale|squash|beets?|carrots?|berries|blueberries|raspberries|strawberries|grapes|lemons?|limes?|oranges?|clementines?|mandarins?|peppers?|tomato(es)?|cucumbers?|broccoli|cauliflower|celery|herbs?|cilantro|parsley|mushrooms?|zucchini|corn|peach(es)?|melon|mango(es)?)\b/],
+];
+const LEGACY_CATEGORY = {
+  'Refrigerated': 'Refrigerated', 'Meats': 'Meats', Frozen: 'Refrigerated', Bakery: 'Pantry',
+  'Pantry': 'Pantry', Snacks: 'Pantry', Beverages: 'Pantry', Baby: 'Pantry',
+  Household: 'Household Cleaning', 'Personal Care': 'Household Cleaning', Produce: 'Produce', Pantry: 'Pantry', Other: 'Household Cleaning',
+};
+
+/** Pick one of CATEGORIES from an item name (and an optional hint such as an older category). */
+export function categorize(name, hint) {
+  const n = String(name || '').toLowerCase();
+  for (const [cat, re] of CATEGORY_RULES) if (re.test(n)) return cat;
+  if (CATEGORIES.includes(hint)) return hint;
+  return LEGACY_CATEGORY[hint] || 'Pantry';
+}
+
+const CATEGORY_VERSION = 3; // bump to re-sort every item once when the category set or rules change
+
+/** Put every item into one of CATEGORIES. Data saved under an older category set is re-sorted once. Mutates. */
+function normalizeCategories(s) {
+  s.settings = s.settings || {};
+  const resortAll = s.settings.catVersion !== CATEGORY_VERSION;
+  let changed = resortAll;
+  for (const it of s.items || []) {
+    if (resortAll || !CATEGORIES.includes(it.category)) {
+      it.category = categorize(it.name, it.category);
+      changed = true;
+    }
+  }
+  s.settings.catVersion = CATEGORY_VERSION;
+  return changed;
+}
 
 const DEFAULT_STATE = () => ({
   version: 1,
@@ -19,7 +58,7 @@ const DEFAULT_STATE = () => ({
   recipes: [],
   list: [],
   deals: [],
-  settings: { apiKey: '', zip: '', mode: 'store', extraStopCost: 3, tip: 0 },
+  settings: { apiKey: '', zip: '', mode: 'store', extraStopCost: 3, tip: 0, catVersion: CATEGORY_VERSION },
 });
 
 let state = load();
@@ -28,7 +67,11 @@ const listeners = new Set();
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return { ...DEFAULT_STATE(), ...JSON.parse(raw) };
+    if (raw) {
+      const loaded = { ...DEFAULT_STATE(), ...JSON.parse(raw) };
+      if (normalizeCategories(loaded)) localStorage.setItem(KEY, JSON.stringify(loaded));
+      return loaded;
+    }
   } catch (e) {
     console.warn('Could not load saved data', e);
   }
@@ -58,6 +101,7 @@ export function replaceState(next) {
   update((s) => {
     Object.keys(s).forEach((k) => delete s[k]);
     Object.assign(s, DEFAULT_STATE(), next);
+    normalizeCategories(s);
   });
 }
 
@@ -91,7 +135,8 @@ export function searchItems(q) {
 }
 
 /** Get or create an item. Mutates state; call inside update(). */
-export function ensureItem(s, { name, category = 'Other', unit = 'ea' }) {
+export function ensureItem(s, { name, category, unit = 'ea' }) {
+  category = CATEGORIES.includes(category) ? category : categorize(name, category);
   const n = norm(name);
   let it = s.items.find((i) => norm(i.name) === n);
   if (!it) {
@@ -121,20 +166,20 @@ export function sampleData() {
     }
     return it;
   };
-  const cheerios = add('Cheerios Original 18 oz', 'Cereal & Breakfast', 'oz', [5.99, 18, 'oz'], [5.49, 18, 'oz']);
+  const cheerios = add('Cheerios Original 18 oz', 'Pantry', 'oz', [5.99, 18, 'oz'], [5.49, 18, 'oz']);
   const bananas = add('Bananas', 'Produce', 'lb', [0.49, 1, 'lb', 6], [0.59, 1, 'lb']);
-  const milk = add('Organic whole milk', 'Dairy & Eggs', 'gal', [6.49, 1, 'gal'], [6.99, 1, 'gal']);
-  const eggs = add('Large eggs, dozen', 'Dairy & Eggs', 'dozen', [4.29, 1, 'dozen'], [3.79, 1, 'dozen', 3, true]);
-  const chicken = add('Boneless chicken breast', 'Meat & Seafood', 'lb', [6.99, 1, 'lb'], [3.99, 1, 'lb', 2, true]);
+  const milk = add('Organic whole milk', 'Refrigerated', 'gal', [6.49, 1, 'gal'], [6.99, 1, 'gal']);
+  const eggs = add('Large eggs, dozen', 'Refrigerated', 'dozen', [4.29, 1, 'dozen'], [3.79, 1, 'dozen', 3, true]);
+  const chicken = add('Boneless chicken breast', 'Meats', 'lb', [6.99, 1, 'lb'], [3.99, 1, 'lb', 2, true]);
   const pasta = add('Spaghetti 16 oz', 'Pantry', 'oz', [1.69, 16, 'oz'], [1.29, 16, 'oz']);
   const sauce = add('Marinara sauce 24 oz', 'Pantry', 'oz', [3.99, 24, 'oz'], [4.49, 24, 'oz']);
   const garlic = add('Garlic', 'Produce', 'ea', [0.79, 1, 'ea'], [0.69, 1, 'ea']);
   const spinach = add('Baby spinach 5 oz', 'Produce', 'oz', [2.99, 5, 'oz'], [3.49, 5, 'oz']);
-  const parm = add('Parmesan, grated 8 oz', 'Dairy & Eggs', 'oz', [5.99, 8, 'oz'], [4.99, 8, 'oz']);
+  const parm = add('Parmesan, grated 8 oz', 'Refrigerated', 'oz', [5.99, 8, 'oz'], [4.99, 8, 'oz']);
   const rice = add('Jasmine rice 2 lb', 'Pantry', 'lb', [4.99, 2, 'lb'], [3.99, 2, 'lb']);
   const broccoli = add('Broccoli crowns', 'Produce', 'lb', [2.49, 1, 'lb'], [1.99, 1, 'lb']);
   const pb = add('Peanut butter 16 oz', 'Pantry', 'oz', [2.99, 16, 'oz'], [3.29, 16, 'oz']);
-  const bread = add('Whole wheat bread', 'Bakery', 'ea', [3.49, 1, 'ea'], [2.99, 1, 'ea']);
+  const bread = add('Whole wheat bread', 'Pantry', 'ea', [3.49, 1, 'ea'], [2.99, 1, 'ea']);
 
   s.pantry = [pasta, garlic, parm, rice, pb, eggs].map((it) => ({ id: uid(), itemId: it.id, qty: 1, addedDate: d(3) }));
   s.list = [cheerios, bananas, milk, chicken, spinach, broccoli, bread].map((it) => {

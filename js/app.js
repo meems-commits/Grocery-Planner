@@ -1,4 +1,4 @@
-import { getState, update, subscribe, replaceState, uid, today, CATEGORIES, itemById, storeById, searchItems, ensureItem, findItem, storeByName, sampleData } from './store.js';
+import { getState, update, subscribe, replaceState, uid, today, CATEGORIES, categorize, itemById, storeById, searchItems, ensureItem, findItem, storeByName, sampleData } from './store.js';
 import { optimizeList, compareItem, bestPriceAt, recipeCoverage, ageDays, isSaleActive, showdown } from './optimize.js';
 import { UNIT_OPTIONS, normUnit, fmtQty, unitPrice } from './units.js';
 import { parseCSV, importPriceRows } from './csv.js';
@@ -117,7 +117,11 @@ function renderList() {
 
     for (const g of opt.plan.groups) {
       html += `<div class="card"><div class="row between"><div class="store-head">${storeDot(g.store)} ${esc(g.store.name)}</div><div class="money">${money(g.total)}</div></div><ul class="list">`;
-      for (const l of g.lines) html += listLine(l.entry, l.item, l.cost, l.best, l.byStore, g.store);
+      let lastCat = null;
+      for (const l of byCategory(g.lines, (x) => x.item)) {
+        if (l.item.category !== lastCat) { lastCat = l.item.category; html += `<li class="cat-head">${esc(lastCat)}</li>`; }
+        html += listLine(l.entry, l.item, l.cost, l.best, l.byStore, g.store);
+      }
       if (g.overhead > 0.005) html += `<li class="small muted"><span class="grow">${mode === 'delivery' ? 'Delivery, service fee & tip' : mode === 'pickup' ? 'Pickup fee' + (g.overhead > (Number(g.store.pickupFee) || 0) + 0.005 ? ' + extra stop' : '') : 'Extra stop (your trip cost)'}</span><span class="money">${money(g.overhead)}</span></li>`;
       if (mode === 'delivery' && g.store.membership) {
         const waived = g.subtotal >= (Number(g.store.membershipMin) || 0);
@@ -140,7 +144,7 @@ function renderList() {
 
   if (opt.unpriced.length) {
     html += `<div class="section-title">No prices yet</div><div class="card"><ul class="list">`;
-    for (const c of opt.unpriced) html += listLine(c.entry, c.item, null, null);
+    for (const c of byCategory(opt.unpriced, (x) => x.item)) html += listLine(c.entry, c.item, null, null);
     html += `</ul><p class="small muted" style="margin:6px 0 0">Tap an item to add a price, or scan a receipt.</p></div>`;
   }
 
@@ -153,6 +157,12 @@ function renderList() {
     html += `</ul><div class="btn-row" style="margin-top:8px"><button class="btn sm" data-action="checkedToPantry">Move to pantry</button><button class="btn sm danger" data-action="clearChecked">Clear</button></div></div>`;
   }
   return html;
+}
+
+// Sort rows by category (Produce, Meats, Refrigerated, Pantry, Other), then name.
+function byCategory(rows, itemOf) {
+  const rank = (c) => { const i = CATEGORIES.indexOf(c); return i < 0 ? 99 : i; };
+  return rows.slice().sort((a, b) => rank(itemOf(a).category) - rank(itemOf(b).category) || itemOf(a).name.localeCompare(itemOf(b).name));
 }
 
 function listLine(entry, item, cost, best, byStore, store) {
@@ -241,7 +251,11 @@ function renderShowdown() {
 
   html += `<div class="seg"><button data-action="sdf" data-k="compared" class="${showdownFilter === 'compared' ? 'on' : ''}">Compared (${sd.compared.length})</button><button data-action="sdf" data-k="missing" class="${showdownFilter === 'missing' ? 'on' : ''}">One store only (${sd.missing.length})</button></div>`;
 
-  const rows = (showdownFilter === 'compared' ? sd.compared : sd.missing).slice();
+  const pool = showdownFilter === 'compared' ? sd.compared : sd.missing;
+  const cats = CATEGORIES.filter((c) => pool.some((r) => r.item.category === c));
+  if (showdownCat && !cats.includes(showdownCat)) showdownCat = '';
+  html += `<div class="chips"><button data-action="sdcat" data-k="" class="chip ${showdownCat ? '' : 'on'}">All</button>${cats.map((c) => `<button data-action="sdcat" data-k="${esc(c)}" class="chip ${showdownCat === c ? 'on' : ''}">${esc(c)} <span class="muted">${pool.filter((r) => r.item.category === c).length}</span></button>`).join('')}</div>`;
+  const rows = pool.filter((r) => !showdownCat || r.item.category === showdownCat);
   rows.sort((a, b) => (b.yearly || 0) - (a.yearly || 0) || (b.pctSaved || 0) - (a.pctSaved || 0) || a.item.name.localeCompare(b.item.name));
   if (!rows.length) return html + `<div class="empty">${showdownFilter === 'compared' ? 'No items priced at two stores yet.' : 'Every item is priced at 2+ stores.'}</div>`;
   html += `<div class="card sd-table"><div class="sd-head" style="grid-template-columns:repeat(${active.length},1fr)">${active.map((st) => `<div>${storeDot(st)} ${esc(st.name)}</div>`).join('')}</div>`;
@@ -381,6 +395,7 @@ async function runLookup(storeId, onlyItemId) {
 let priceQuery = '';
 let priceTab = 'showdown';
 let showdownFilter = 'compared';
+let showdownCat = '';
 function renderPrices() {
   const s = getState();
   const seg = `<div class="seg"><button data-action="ptab" data-k="showdown" class="${priceTab === 'showdown' ? 'on' : ''}">Store showdown</button><button data-action="ptab" data-k="all" class="${priceTab === 'all' ? 'on' : ''}">All items</button></div>`;
@@ -392,7 +407,7 @@ function renderPrices() {
     return html + `<div class="empty"><p>No prices yet. Scan a receipt, add prices by hand, or import your Excel sheet (save it as CSV).</p><button class="btn" data-action="sample">Load sample data</button></div>`;
   }
   const byCat = {};
-  for (const it of items) (byCat[it.category || 'Other'] ||= []).push(it);
+  for (const it of items) (byCat[it.category || 'Pantry'] ||= []).push(it);
   for (const cat of CATEGORIES.filter((c) => byCat[c]).concat(Object.keys(byCat).filter((c) => !CATEGORIES.includes(c)))) {
     html += `<div class="section-title">${esc(cat)}</div><div class="card"><ul class="list">`;
     for (const it of byCat[cat]) {
@@ -530,7 +545,7 @@ async function runReceipt(files, text) {
           name: existing ? existing.name : l.name,
           matched: !!existing,
           raw: l.raw,
-          category: existing?.category || (CATEGORIES.includes(l.category) ? l.category : 'Other'),
+          category: existing?.category || categorize(l.name, l.category),
           count,
           price: Math.round((l.line_total / count) * 100) / 100,
           qty: l.size_qty || 1,
@@ -653,7 +668,7 @@ function dealCard(d) {
 function saveDealPrice(s, d) {
   const st = storeByName(s, d.store);
   if (!st) return false;
-  const it = d.itemId ? s.items.find((i) => i.id === d.itemId) : ensureItem(s, { name: d.item, category: CATEGORIES.includes(d.category) ? d.category : 'Other', unit: normUnit(d.size_unit) });
+  const it = d.itemId ? s.items.find((i) => i.id === d.itemId) : ensureItem(s, { name: d.item, category: d.category, unit: normUnit(d.size_unit) });
   d.itemId = it.id;
   s.prices.push({ id: uid(), dealId: d.id, itemId: it.id, storeId: st.id, price: d.sale_price, qty: d.size_qty || 1, unit: normUnit(d.size_unit), date: today(), sale: true, saleStarts: d.valid_from || '', saleEnds: d.valid_to || '', memberOnly: d.member_only, source: 'weekly ad' });
   if (d.regular_price) s.prices.push({ id: uid(), itemId: it.id, storeId: st.id, price: d.regular_price, qty: d.size_qty || 1, unit: normUnit(d.size_unit), date: today(), sale: false, source: 'weekly ad (regular)' });
@@ -705,7 +720,7 @@ function renderPantry() {
   const byCat = {};
   for (const p of s.pantry) {
     const it = itemById(p.itemId);
-    if (it) (byCat[it.category || 'Other'] ||= []).push({ p, it });
+    if (it) (byCat[it.category || 'Pantry'] ||= []).push({ p, it });
   }
   for (const cat of Object.keys(byCat).sort((a, b) => CATEGORIES.indexOf(a) - CATEGORIES.indexOf(b))) {
     html += `<div class="section-title">${esc(cat)}</div><div class="card"><ul class="list">`;
@@ -843,6 +858,7 @@ const actions = {
   mode: (d) => update((s) => (s.settings.mode = d.mode)),
   ptab: (d) => { priceTab = d.k; render(); },
   sdf: (d) => { showdownFilter = d.k; render(); },
+  sdcat: (d) => { showdownCat = d.k; render(); },
   fillGaps: () => { lookup = null; fillGapsSheet(); },
   quickEntry: () => quickEntrySheet(),
   quickStore: (d) => { quickStore = d.id; refreshSheet(); },

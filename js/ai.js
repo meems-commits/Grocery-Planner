@@ -62,7 +62,7 @@ const RECEIPT_SCHEMA = obj({
       raw: { type: 'string', description: 'line text exactly as printed' },
       name: { type: 'string', description: 'clean product name a person would use, with brand and size, e.g. "Cheerios Original 18 oz" or "Bananas"' },
       match: { ...nullable('string'), description: 'exact name from KNOWN ITEMS if it is the same product, else null' },
-      category: { type: 'string' },
+      category: { type: 'string', enum: ['Produce', 'Meats', 'Refrigerated', 'Pantry', 'Household Cleaning'] },
       count: { type: 'number', description: 'number of packages/units bought (1 for weighed produce)' },
       size_qty: { type: 'number', description: 'size of ONE package (or weight bought, for by-the-pound items)' },
       size_unit: { type: 'string', enum: UNIT_OPTIONS },
@@ -117,7 +117,7 @@ export async function readReceipt({ files = [], text = '' }) {
       `Read every purchased line on this grocery receipt. Expand abbreviations (e.g. "GM CHRIOS 18OZ" -> "Cheerios Original 18 oz"). ` +
       `For by-weight produce/meat, use size_unit "lb" with the weight bought and count 1. ` +
       `Fold coupon/member-discount lines into the item they apply to. Skip tax, totals, payment and bag-fee lines. ` +
-      `Categories: Produce, Dairy & Eggs, Meat & Seafood, Bakery, Pantry, Cereal & Breakfast, Snacks, Frozen, Beverages, Household, Personal Care, Baby, Other.`,
+      `Category is one of: Produce (fresh fruit & vegetables), Meats (meat, poultry, fish, deli meat), Refrigerated (dairy, eggs, cheese, plant milks, tofu, frozen foods), Pantry (shelf-stable food: canned, dry goods, cereal, bread, snacks, baby food), Household Cleaning (soaps, detergent, paper goods and other non-food household items).`,
   });
   return structured({
     system: 'You extract structured data from grocery receipts accurately. Never invent lines that are not on the receipt.',
@@ -136,7 +136,7 @@ const DEALS_SCHEMA = obj({
       store: { type: 'string' },
       item: { type: 'string', description: 'product as advertised, with brand and size' },
       match: { ...nullable('string'), description: 'exact name from WATCH LIST if it is the same/equivalent product, else null' },
-      category: { type: 'string' },
+      category: { type: 'string', enum: ['Produce', 'Meats', 'Refrigerated', 'Pantry', 'Household Cleaning'] },
       sale_price: { type: 'number', description: 'price for size_qty size_unit' },
       size_qty: { type: 'number' },
       size_unit: { type: 'string', enum: UNIT_OPTIONS },
