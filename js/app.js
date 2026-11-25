@@ -208,7 +208,7 @@ function compareBlock(it) {
         <div class="small muted right">${r.best.onSale && r.best.regularPerUnit ? `reg ${perUnit(r.best.regularPerUnit, it.unit)}` : ''}</div>
       </div>`).join('')}
     ${rows.length > 1 ? `<p class="small" style="margin:8px 0 0">${esc(rows[0].store.name)} is ${Math.round((1 - rows[0].best.perUnit / rows[1].best.perUnit) * 100)}% cheaper than ${esc(rows[1].store.name)}.</p>` : ''}
-    ${missing.length ? `<p class="small muted" style="margin:6px 0 0">No price yet at ${missing.map((m) => esc(m.name)).join(', ')}.</p><button class="btn sm" style="margin-top:6px" data-action="lookupOne" data-item="${it.id}">🔎 Look up online</button>` : ''}
+    ${missing.length ? `<p class="small muted" style="margin:6px 0 0">No price yet at ${missing.map((m) => esc(m.name)).join(', ')}.</p><div class="btn-row" style="margin-top:6px"><button class="btn sm" data-action="addPrice" data-item="${it.id}" data-store="${missing[0].id}">✏️ Add ${esc(missing[0].name)} price</button><button class="btn sm" data-action="lookupOne" data-item="${it.id}">🔎 Look up</button></div>` : ''}
     ${it.notes ? `<details style="margin-top:8px"><summary class="small">Notes</summary><p class="small muted" style="white-space:pre-wrap">${esc(it.notes)}</p></details>` : ''}
   </div>`;
 }
@@ -237,7 +237,7 @@ function renderShowdown() {
   html += `<div class="card"><div class="row between"><div><strong>${sd.compared.length}</strong> of ${totalItems} items have prices at 2+ stores</div></div>
     <div class="bar" style="margin:8px 0"><div style="width:${totalItems ? Math.round((sd.compared.length / totalItems) * 100) : 0}%"></div></div>
     <p class="small muted" style="margin:0 0 8px">More prices = a better answer. Scan receipts, or let Claude look up prices on store websites.</p>
-    <button class="btn sm block" data-action="fillGaps">🔎 Fill in missing prices</button></div>`;
+    <div class="btn-row"><button class="btn sm" data-action="quickEntry">✏️ Type in prices</button><button class="btn sm" data-action="fillGaps">🔎 Look up online</button></div></div>`;
 
   html += `<div class="seg"><button data-action="sdf" data-k="compared" class="${showdownFilter === 'compared' ? 'on' : ''}">Compared (${sd.compared.length})</button><button data-action="sdf" data-k="missing" class="${showdownFilter === 'missing' ? 'on' : ''}">One store only (${sd.missing.length})</button></div>`;
 
@@ -289,6 +289,62 @@ function fillGapsSheet(onlyItemId) {
         <button class="btn sm" data-action="lookupRun" data-store="${o.store.id}" data-only="${onlyItemId || ''}" ${o.missing.length ? '' : 'disabled'}>Search</button></div>`).join('')}
       ${s.settings.apiKey ? '' : '<p class="small" style="color:var(--warn)">Add your Anthropic API key in Settings first.</p>'}`;
   });
+}
+
+// Fast manual entry: every item missing a price at one store, size prefilled, type the price.
+let quickStore = null;
+function guessSize(it, storeId) {
+  if (it.sizes?.[storeId]) return it.sizes[storeId];
+  const last = getState().prices.filter((p) => p.itemId === it.id).sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+  if (last && !(it.unit === 'lb' && last.unit === 'lb')) return { qty: last.qty, unit: last.unit };
+  return { qty: 1, unit: it.unit };
+}
+function quickEntrySheet() {
+  const active = getState().stores.filter((st) => st.enabled !== false);
+  if (!quickStore || !active.find((x) => x.id === quickStore)) quickStore = (active.find((x) => x.id === 'giant') || active[0])?.id;
+  sheet(() => {
+    const s = getState();
+    const store = storeById(quickStore);
+    const rank = { weekly: 0, biweekly: 1, monthly: 2 };
+    const missing = s.items
+      .filter((i) => !s.prices.some((p) => p.itemId === i.id && p.storeId === quickStore))
+      .sort((a, b) => (rank[a.frequency] ?? 9) - (rank[b.frequency] ?? 9) || a.name.localeCompare(b.name));
+    return `<h2>Type in prices</h2>
+      <div class="seg">${active.map((x) => `<button data-action="quickStore" data-id="${x.id}" class="${x.id === quickStore ? 'on' : ''}">${esc(x.name)}</button>`).join('')}</div>
+      <p class="small muted" style="margin-top:0">Open the ${esc(store.name)} app or website (or walk the aisles) and type the price for each package. Sizes are pre-filled; fix any that differ. Leave blank to skip. By-weight items: enter the price per lb with size 1 lb.</p>
+      ${missing.length ? '' : '<div class="empty">Every item has a price here.</div>'}
+      ${missing.map((it) => {
+        const sz = guessSize(it, quickStore);
+        return `<div class="card qe-row" data-item="${it.id}">
+          <div><strong>${esc(it.name)}</strong>${it.frequency ? ` <span class="pill">${esc(it.frequency)}</span>` : ''}</div>
+          ${it.products?.[quickStore] ? `<div class="small muted">${esc(it.products[quickStore])}${it.match?.[quickStore] && it.match[quickStore] !== 'Exact' ? ` <span class="pill warn">${esc(it.match[quickStore])}</span>` : ''}</div>` : ''}
+          ${it.links?.[quickStore] ? `<div class="small"><a href="${esc(it.links[quickStore])}" target="_blank" rel="noopener">Open in ${esc(store.name)} ↗</a></div>` : ''}
+          <div class="fields-3" style="margin-top:8px">
+            <label class="field"><span>Price $</span><input type="number" step="0.01" min="0" inputmode="decimal" name="price" placeholder="0.00"></label>
+            <label class="field"><span>Size</span><input type="number" step="any" min="0" inputmode="decimal" name="qty" value="${esc(sz.qty)}"></label>
+            <label class="field"><span>Unit</span><select name="unit">${UNIT_OPTIONS.map((u) => `<option ${u === normUnit(sz.unit) ? 'selected' : ''}>${u}</option>`).join('')}</select></label>
+          </div>
+          <label class="check small"><input type="checkbox" name="sale"> Sale price</label>
+        </div>`;
+      }).join('')}
+      ${missing.length ? `<div class="qe-save"><button class="btn primary block" data-action="quickSave">Save prices</button></div>` : ''}`;
+  });
+}
+function saveQuickEntry() {
+  const rows = [...document.querySelectorAll('#sheet .qe-row')];
+  const entries = rows.map((r) => ({
+    itemId: r.dataset.item,
+    price: parseFloat(r.querySelector('[name=price]').value),
+    qty: parseFloat(r.querySelector('[name=qty]').value) || 1,
+    unit: r.querySelector('[name=unit]').value,
+    sale: r.querySelector('[name=sale]').checked,
+  })).filter((e) => e.price > 0);
+  if (!entries.length) return toast('Type at least one price');
+  update((s) => {
+    for (const e of entries) s.prices.push({ id: uid(), itemId: e.itemId, storeId: quickStore, price: e.price, qty: e.qty, unit: normUnit(e.unit), date: today(), sale: e.sale, saleEnds: '', source: 'manual' });
+  });
+  closeSheet();
+  toast(`Saved ${entries.length} ${storeById(quickStore).name} price${entries.length === 1 ? '' : 's'}`);
 }
 
 let lookup = null;
@@ -403,17 +459,18 @@ function saveLookup() {
   toast(`Saved ${n} price${n === 1 ? '' : 's'}`);
 }
 
-function addPriceSheet(itemId) {
+function addPriceSheet(itemId, storeId) {
   const s = getState();
   const it = itemId ? itemById(itemId) : null;
+  const sz = it && storeId ? guessSize(it, storeId) : null;
   sheet(() => `<h2>Add a price</h2>
     <form data-submit="savePrice">
       ${it ? `<input type="hidden" name="itemId" value="${it.id}"><p><strong>${esc(it.name)}</strong></p>` : `<label class="field"><span>Item</span><input type="text" name="name" required placeholder="e.g. Bananas" list="itemNames"></label><datalist id="itemNames">${s.items.map((i) => `<option value="${esc(i.name)}">`).join('')}</datalist>`}
-      <label class="field"><span>Store</span><select name="storeId">${s.stores.map((st) => `<option value="${st.id}">${esc(st.name)}</option>`).join('')}</select></label>
+      <label class="field"><span>Store</span><select name="storeId">${s.stores.map((st) => `<option value="${st.id}" ${st.id === storeId ? 'selected' : ''}>${esc(st.name)}</option>`).join('')}</select></label>
       <div class="fields-3">
         <label class="field"><span>Price $</span><input type="number" name="price" step="0.01" min="0" inputmode="decimal" required></label>
-        <label class="field"><span>For qty</span><input type="number" name="qty" step="any" min="0" value="1" inputmode="decimal"></label>
-        <label class="field"><span>Unit</span><select name="unit">${UNIT_OPTIONS.map((u) => `<option ${it && u === it.unit ? 'selected' : ''}>${u}</option>`).join('')}</select></label>
+        <label class="field"><span>For qty</span><input type="number" name="qty" step="any" min="0" value="${esc(sz ? sz.qty : 1)}" inputmode="decimal"></label>
+        <label class="field"><span>Unit</span><select name="unit">${UNIT_OPTIONS.map((u) => `<option ${it && u === normUnit(sz ? sz.unit : it.unit) ? 'selected' : ''}>${u}</option>`).join('')}</select></label>
       </div>
       <div class="fields-2">
         <label class="field"><span>Date</span><input type="date" name="date" value="${today()}"></label>
@@ -787,6 +844,9 @@ const actions = {
   ptab: (d) => { priceTab = d.k; render(); },
   sdf: (d) => { showdownFilter = d.k; render(); },
   fillGaps: () => { lookup = null; fillGapsSheet(); },
+  quickEntry: () => quickEntrySheet(),
+  quickStore: (d) => { quickStore = d.id; refreshSheet(); },
+  quickSave: () => saveQuickEntry(),
   lookupOne: (d) => { lookup = null; fillGapsSheet(d.item); },
   lookupRun: (d) => runLookup(d.store, d.only || null),
   lookupReset: () => { lookup = null; refreshSheet(); },
@@ -835,7 +895,7 @@ const actions = {
     s.list = s.list.filter((e) => !e.checked);
   }),
   itemDetail: (d) => itemDetailSheet(d.item),
-  addPrice: (d) => addPriceSheet(d.item),
+  addPrice: (d) => addPriceSheet(d.item, d.store),
   addToList: (d) => { actions.pick({ picker: 'list', item: d.item }); },
   delPrice: (d) => update((s) => (s.prices = s.prices.filter((p) => p.id !== d.id))),
   delItem: (d) => {

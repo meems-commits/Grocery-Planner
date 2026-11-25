@@ -153,6 +153,11 @@ def main():
         item = {"id": uid(), "name": name, "category": category_of(name), "unit": unit,
                 "brandLocked": kind == "Brand-locked", "frequency": (freq or "").lower() or None,
                 "notes": notes, "products": {}, "links": {}}
+        item["sizes"] = {}
+        if wf_size:
+            item["sizes"]["wf"] = {"qty": wf_size, "unit": unit}
+        if giant_size:
+            item["sizes"]["giant"] = {"qty": giant_size, "unit": unit}
         if wf_brand:
             item["products"]["wf"] = wf_brand
         gmatch = giant_match.get(name)
@@ -275,6 +280,8 @@ def main():
     prices[:] = deduped
 
     for i in items:
+        if not i.get("sizes"):
+            i.pop("sizes", None)
         if not i["products"]:
             del i["products"]
         if not i["links"]:

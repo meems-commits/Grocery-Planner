@@ -129,3 +129,5 @@ a { color: var(--accent); }
 .sd-row:last-child { border-bottom: 0; }
 .sd-prices { margin-top: 4px; font-size: 14px; font-variant-numeric: tabular-nums; }
 .sd-win { color: var(--accent); font-weight: 700; }
+.qe-save { position: sticky; bottom: 0; padding: 10px 0 4px; background: var(--bg); }
+.qe-row .field { margin-bottom: 6px; }
