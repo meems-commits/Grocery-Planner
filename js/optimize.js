@@ -59,19 +59,25 @@ export function entryCost(entry, item, store, prices, mode, now = Date.now()) {
   const qty = convert(entry.qty || 1, entry.unit || item.unit, item.unit);
   if (qty == null) return null;
   let cost = best.perUnit * qty;
-  if (mode === 'delivery') cost *= 1 + (Number(store.deliveryMarkupPct) || 0) / 100;
+  // app/online prices (delivery and pickup) can be marked up over shelf prices
+  if (mode === 'delivery' || mode === 'pickup') cost *= 1 + (Number(store.deliveryMarkupPct) || 0) / 100;
   return { cost, best };
 }
 
-function storeOverhead(store, subtotal, mode, isExtraStop, settings) {
+/** Fees for one store order/stop. Returns {fee, belowMin}. */
+export function storeOverhead(store, subtotal, mode, isExtraStop, settings = {}) {
+  const minOrder = Number(store.minOrder) || 0;
+  const belowMin = (mode === 'delivery' || mode === 'pickup') && minOrder > 0 && subtotal < minOrder;
   if (mode === 'delivery') {
-    const fee = Number(store.deliveryFee) || 0;
-    const svc = ((Number(store.serviceFeePct) || 0) / 100) * subtotal;
     const freeOver = Number(store.freeDeliveryOver) || 0;
-    const deliveryFee = freeOver && subtotal >= freeOver ? 0 : fee;
-    return deliveryFee + svc + (Number(settings.tip) || 0);
+    const memberFree = store.membership && subtotal >= (Number(store.membershipMin) || 0);
+    const deliveryFee = memberFree || (freeOver && subtotal >= freeOver) ? 0 : Number(store.deliveryFee) || 0;
+    const svc = ((Number(store.serviceFeePct) || 0) / 100) * subtotal;
+    const tip = (Number(store.tipFlat) || 0) + (Number(settings.tip) || 0);
+    return { fee: deliveryFee + svc + tip, belowMin };
   }
-  return isExtraStop ? Number(settings.extraStopCost) || 0 : 0;
+  if (mode === 'pickup') return { fee: (Number(store.pickupFee) || 0) + (isExtraStop ? Number(settings.extraStopCost) || 0 : 0), belowMin };
+  return { fee: isExtraStop ? Number(settings.extraStopCost) || 0 : 0, belowMin: false };
 }
 
 /**
@@ -125,30 +131,33 @@ export function optimizeList({ list, items, stores, prices, mode = 'store', sett
       })
       .sort((a, b) => b.subtotal - a.subtotal)
       .map((g, i) => {
-        const overhead = storeOverhead(g.store, g.subtotal, mode, i > 0, settings);
-        return { ...g, overhead, total: g.subtotal + overhead };
+        const { fee, belowMin } = storeOverhead(g.store, g.subtotal, mode, i > 0, settings);
+        return { ...g, overhead: fee, belowMin, total: g.subtotal + fee };
       });
     const total = groups.reduce((t, g) => t + g.total, 0);
-    return { groups, total, missing };
+    return { groups, total, missing, belowMin: groups.some((g) => g.belowMin) };
   };
 
   let best = null;
+  let fallback = null; // best plan that misses an order minimum, if nothing else works
   const n = activeStores.length;
   for (let mask = 1; mask < 1 << n; mask++) {
     const subset = activeStores.filter((_, i) => mask & (1 << i));
     const r = evaluate(subset, false);
+    if (r && r.belowMin) { fallback = !fallback || r.total < fallback.total ? r : fallback; continue; }
     if (r && (!best || r.total < best.total - 0.005 || (Math.abs(r.total - best.total) < 0.005 && r.groups.length < best.groups.length))) {
       best = r;
     }
   }
+  if (!best) best = fallback;
   if (!best && priced.length) best = evaluate(activeStores, true);
 
   const singles = activeStores.map((s) => {
     const r = evaluate([s], true);
-    return { store: s, total: r.total, missingCount: r.missing.length, missing: r.missing };
+    return { store: s, total: r.total, missingCount: r.missing.length, missing: r.missing, belowMin: r.belowMin };
   }).sort((a, b) => a.missingCount - b.missingCount || a.total - b.total);
 
-  const bestSingleComplete = singles.find((s) => s.missingCount === 0);
+  const bestSingleComplete = singles.find((s) => s.missingCount === 0 && !s.belowMin) || singles.find((s) => s.missingCount === 0);
   const savingsVsSingle = best && bestSingleComplete ? bestSingleComplete.total - best.total : null;
 
   return {
@@ -176,4 +185,45 @@ export function recipeCoverage(recipe, pantry, items) {
   });
   const haveCount = status.filter((s) => s.have).length;
   return { status, haveCount, total: need.length, pct: need.length ? haveCount / need.length : 1 };
+}
+
+/**
+ * Head-to-head comparison of stores across every item they both price.
+ * Returns per-item rows, win counts and pairwise totals.
+ */
+export function showdown(items, stores, prices, { now = Date.now() } = {}) {
+  const active = stores.filter((s) => s.enabled !== false);
+  const perYear = { weekly: 52, biweekly: 26, monthly: 12 };
+  const rows = [];
+  for (const item of items) {
+    const cmp = compareItem(item, active, prices, now);
+    if (!cmp.length) continue;
+    const byStore = Object.fromEntries(cmp.map((r) => [r.store.id, r.best]));
+    const [cheapest, second] = cmp;
+    const pctSaved = second ? 1 - cheapest.best.perUnit / second.best.perUnit : null;
+    // yearly savings at the item's purchase frequency, one typical package each time
+    const typicalQty = convert(cheapest.best.qty || 1, cheapest.best.unit, item.unit) || 1;
+    const times = perYear[item.frequency] || null;
+    const yearly = second && times ? (second.best.perUnit - cheapest.best.perUnit) * typicalQty * times : null;
+    rows.push({ item, byStore, cheapest: cheapest.store, compared: cmp.length > 1, pctSaved, yearly });
+  }
+  const compared = rows.filter((r) => r.compared);
+  const wins = Object.fromEntries(active.map((s) => [s.id, 0]));
+  for (const r of compared) wins[r.cheapest.id]++;
+  const pairs = [];
+  for (let i = 0; i < active.length; i++) {
+    for (let j = i + 1; j < active.length; j++) {
+      const a = active[i], b = active[j];
+      let ta = 0, tb = 0, n = 0, aw = 0, bw = 0;
+      for (const r of rows) {
+        const pa = r.byStore[a.id], pb = r.byStore[b.id];
+        if (!pa || !pb) continue;
+        const q = convert(pa.qty || 1, pa.unit, r.item.unit) || 1;
+        ta += pa.perUnit * q; tb += pb.perUnit * q; n++;
+        if (pa.perUnit < pb.perUnit - 1e-9) aw++; else if (pb.perUnit < pa.perUnit - 1e-9) bw++;
+      }
+      if (n) pairs.push({ a, b, n, ta, tb, aw, bw });
+    }
+  }
+  return { rows, compared, wins, pairs, missing: rows.filter((r) => !r.compared) };
 }

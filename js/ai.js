@@ -238,3 +238,74 @@ export async function recipeIdeas({ onHand, onSale, request }) {
     effort: 'low',
   });
 }
+
+// ---------------- Price lookup for items missing a store price ----------------
+
+const LOOKUP_SCHEMA = obj({
+  results: {
+    type: 'array',
+    items: obj({
+      item: { type: 'string', description: 'the item name exactly as given' },
+      found: { type: 'boolean' },
+      product: { type: 'string', description: "the store's product name, with brand and size" },
+      match: { type: 'string', enum: ['exact', 'close', 'substitute'], description: 'exact = same brand and product; close = equivalent (e.g. store brand); substitute = different but usable' },
+      price: { type: 'number', description: 'current shelf/app price for one package (0 if not found)' },
+      size_qty: { type: 'number' },
+      size_unit: { type: 'string', enum: UNIT_OPTIONS },
+      on_sale: { type: 'boolean' },
+      regular_price: nullable('number'),
+      source_url: nullable('string'),
+      note: { type: 'string', description: 'caveats: price seen on Instacart, may vary by store, etc.' },
+    }),
+  },
+});
+
+export async function lookupPrices({ storeName, zip, items, onStatus = () => {} }) {
+  const c = client();
+  const lines = items.map((i, n) =>
+    `${n + 1}. ${i.name}` +
+    (i.wanted ? ` — known match at ${storeName}: ${i.wanted}` : '') +
+    (i.reference ? ` — we usually buy: ${i.reference}` : '') +
+    (i.brandLocked ? ' — BRAND MATTERS, same brand only' : ' — store brand is fine') +
+    (i.link ? `\n   product page: ${i.link}` : '')
+  ).join('\n');
+  const prompt =
+    `Today is ${new Date().toDateString()}. Find the current price at ${storeName}${zip ? ` (store near ZIP ${zip})` : ''} for each grocery item below. ` +
+    `Use ${storeName}'s own website or app listings first, then its Instacart storefront. Fetch the product pages given where possible. ` +
+    `Report the package price and size, whether it is a sale price, the product you matched and the source URL. ` +
+    `If you cannot find a current price for an item, say so rather than guessing.\n\n${lines}`;
+  let messages = [{ role: 'user', content: prompt }];
+  let research = '';
+  try {
+    onStatus(`Searching ${storeName}…`);
+    for (let turn = 0; turn < 4; turn++) {
+      const msg = await c.beta.messages
+        .stream({
+          model: MODEL,
+          max_tokens: 64000,
+          betas: ['server-side-fallback-2026-07-01'],
+          fallbacks: 'default',
+          output_config: { effort: 'medium' },
+          tools: [
+            { type: 'web_search_20260209', name: 'web_search', max_uses: 15 },
+            { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 15 },
+          ],
+          messages,
+        })
+        .finalMessage();
+      if (msg.stop_reason === 'refusal') throw new Error('Claude declined this request.');
+      research += msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+      if (msg.stop_reason !== 'pause_turn') break;
+      onStatus('Still searching…');
+      messages = [...messages, { role: 'assistant', content: msg.content }];
+    }
+  } catch (e) {
+    throw friendlyError(e);
+  }
+  onStatus('Organizing results…');
+  return structured({
+    system: 'You convert grocery price research notes into structured records. Never invent prices that are not in the notes; mark those items found=false.',
+    content: [{ type: 'text', text: `STORE: ${storeName}\nITEMS (use these exact names in "item"):\n${items.map((i) => i.name).join('\n')}\n\nRESEARCH NOTES:\n${research}` }],
+    schema: LOOKUP_SCHEMA,
+  });
+}

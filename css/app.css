@@ -119,3 +119,13 @@ label.field > span { display: block; font-size: 13px; color: var(--muted); margi
 .suggest button:last-child { border-bottom: 0; }
 details summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 a { color: var(--accent); }
+
+.vs-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; gap: 2px; margin: 10px 0 6px; }
+.sd-table { padding: 0 14px; }
+.sd-head, .sd-prices { display: grid; gap: 6px; }
+.sd-head { font-size: 12px; font-weight: 600; color: var(--muted); padding: 10px 0 8px; border-bottom: 1px solid var(--line); position: sticky; top: 58px; background: var(--card); z-index: 1; }
+.sd-head > div { display: flex; align-items: center; gap: 5px; overflow: hidden; white-space: nowrap; }
+.sd-row { display: block; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 10px 0; }
+.sd-row:last-child { border-bottom: 0; }
+.sd-prices { margin-top: 4px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.sd-win { color: var(--accent); font-weight: 700; }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { optimizeList, bestPriceAt, compareItem, recipeCoverage } from '../js/optimize.js';
+import { optimizeList, bestPriceAt, compareItem, recipeCoverage, showdown, storeOverhead } from '../js/optimize.js';
 import { convert, unitPrice, normUnit } from '../js/units.js';
 
 const stores = [
@@ -87,4 +87,33 @@ test('recipe coverage', () => {
   const c = recipeCoverage(recipe, [{ itemId: 'milk', qty: 1 }], items);
   assert.equal(c.total, 2);
   assert.equal(c.haveCount, 1);
+});
+
+test('delivery minimum steers to a store that meets it', () => {
+  const st = [
+    { id: 'a', name: 'A', deliveryFee: 5, minOrder: 60 },
+    { id: 'b', name: 'B', deliveryFee: 9 },
+  ];
+  const prices = [P('milk', 'a', 5, 1, 'gal'), P('milk', 'b', 6, 1, 'gal')];
+  const list = [{ id: 'x', itemId: 'milk', qty: 1, unit: 'gal' }];
+  const r = optimizeList({ list, items, stores: st, prices, mode: 'delivery', settings: {} });
+  assert.equal(r.plan.groups[0].store.id, 'b');
+});
+
+test('membership waives delivery fee above its minimum; flat tip and pickup fee apply', () => {
+  const s = { deliveryFee: 9.95, membership: true, membershipMin: 25, tipFlat: 7, pickupFee: 1.99 };
+  assert.equal(storeOverhead(s, 30, 'delivery', false).fee, 7);
+  assert.equal(storeOverhead(s, 20, 'delivery', false).fee, 16.95);
+  assert.equal(storeOverhead(s, 20, 'pickup', false).fee, 1.99);
+});
+
+test('showdown counts wins and yearly savings', () => {
+  const its = [{ ...items[0], frequency: 'weekly' }, items[1], items[2]];
+  const prices = [P('cheerios', 'wf', 6, 18, 'oz'), P('cheerios', 'g', 5, 18, 'oz'), P('banana', 'wf', 0.49, 1, 'lb'), P('banana', 'g', 0.59, 1, 'lb'), P('milk', 'wf', 6, 1, 'gal')];
+  const sd = showdown(its, stores, prices);
+  assert.equal(sd.compared.length, 2);
+  assert.deepEqual(sd.wins, { wf: 1, g: 1 });
+  assert.ok(Math.abs(sd.rows[0].yearly - 52) < 1e-9);
+  assert.equal(sd.missing.length, 1);
+  assert.equal(sd.pairs[0].n, 2);
 });

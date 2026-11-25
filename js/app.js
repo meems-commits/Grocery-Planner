@@ -1,5 +1,5 @@
 import { getState, update, subscribe, replaceState, uid, today, CATEGORIES, itemById, storeById, searchItems, ensureItem, findItem, storeByName, sampleData } from './store.js';
-import { optimizeList, compareItem, bestPriceAt, recipeCoverage, ageDays, isSaleActive } from './optimize.js';
+import { optimizeList, compareItem, bestPriceAt, recipeCoverage, ageDays, isSaleActive, showdown } from './optimize.js';
 import { UNIT_OPTIONS, normUnit, fmtQty, unitPrice } from './units.js';
 import { parseCSV, importPriceRows } from './csv.js';
 
@@ -93,9 +93,11 @@ function renderList() {
   let html = `
     <div class="seg">
       <button data-action="mode" data-mode="store" class="${mode === 'store' ? 'on' : ''}">🛒 In store</button>
+      <button data-action="mode" data-mode="pickup" class="${mode === 'pickup' ? 'on' : ''}">🚗 Pickup</button>
       <button data-action="mode" data-mode="delivery" class="${mode === 'delivery' ? 'on' : ''}">🚚 Delivery</button>
     </div>
-    ${itemPicker('list', 'Add to list… (e.g. Cheerios)')}`;
+    ${itemPicker('list', 'Add to list… (e.g. Cheerios)')}
+    ${s.items.some((i) => i.frequency === 'weekly' && !s.list.some((e) => e.itemId === i.id && !e.checked)) ? `<button class="btn sm" style="margin-top:8px" data-action="addStaples">+ Add weekly staples</button>` : ''}`;
 
   if (!s.list.length) {
     html += `<div class="empty"><p>Your list is empty.</p>${s.items.length ? '' : `<p class="small">New here? Load sample data to see how it works, or scan a receipt to start building your price book.</p><button class="btn" data-action="sample">Load sample data</button>`}</div>`;
@@ -104,27 +106,31 @@ function renderList() {
 
   if (opt.plan.groups.length) {
     const stops = opt.plan.groups.length;
+    const online = mode !== 'store';
     html += `<div class="card" style="margin-top:12px">
-      <div class="row between"><div><div class="muted small">Cheapest plan · ${stops} ${mode === 'delivery' ? (stops > 1 ? 'orders' : 'order') : stops > 1 ? 'stops' : 'stop'}</div><div class="big money">${money(opt.plan.total)}</div></div>
+      <div class="row between"><div><div class="muted small">Cheapest plan · ${stops} ${online ? (stops > 1 ? 'orders' : 'order') : stops > 1 ? 'stops' : 'stop'}</div><div class="big money">${money(opt.plan.total)}</div></div>
       <div class="right small muted">${activeCount} item${activeCount === 1 ? '' : 's'}${opt.unpriced.length ? `<br>${opt.unpriced.length} without prices` : ''}</div></div>
       ${opt.savingsVsSingle > 0.005 && stops > 1 ? `<div class="savings">Saves ${money(opt.savingsVsSingle)} vs. all at ${esc(opt.bestSingle.store.name)}</div>` : ''}
-      ${stops === 1 && opt.singles.length > 1 ? `<div class="savings">Everything is cheapest at one ${mode === 'delivery' ? 'store' : 'stop'} after ${mode === 'delivery' ? 'fees' : 'trip cost'}.</div>` : ''}
+      ${stops === 1 && opt.singles.length > 1 ? `<div class="savings">One ${online ? 'order' : 'stop'} is cheapest once ${online ? 'fees and app markups' : 'your extra-trip cost'} are counted.</div>` : ''}
+      ${opt.plan.belowMin ? `<div class="savings" style="background:var(--sale-soft);color:var(--sale)">Below a store's order minimum. Add items or switch stores.</div>` : ''}
     </div>`;
 
     for (const g of opt.plan.groups) {
       html += `<div class="card"><div class="row between"><div class="store-head">${storeDot(g.store)} ${esc(g.store.name)}</div><div class="money">${money(g.total)}</div></div><ul class="list">`;
       for (const l of g.lines) html += listLine(l.entry, l.item, l.cost, l.best, l.byStore, g.store);
-      if (g.overhead > 0.005) html += `<li class="small muted"><span class="grow">${mode === 'delivery' ? 'Delivery & service fees' + (s.settings.tip ? ' + tip' : '') : 'Extra stop (your trip cost)'}</span><span class="money">${money(g.overhead)}</span></li>`;
+      if (g.overhead > 0.005) html += `<li class="small muted"><span class="grow">${mode === 'delivery' ? 'Delivery, service fee & tip' : mode === 'pickup' ? 'Pickup fee' + (g.overhead > (Number(g.store.pickupFee) || 0) + 0.005 ? ' + extra stop' : '') : 'Extra stop (your trip cost)'}</span><span class="money">${money(g.overhead)}</span></li>`;
+      if (g.belowMin) html += `<li class="small" style="color:var(--sale)">Under ${esc(g.store.name)}'s ${money(g.store.minOrder)} minimum</li>`;
+      if (online && Number(g.store.deliveryMarkupPct)) html += `<li class="small muted">Prices include ~${esc(g.store.deliveryMarkupPct)}% app markup</li>`;
       html += `</ul></div>`;
     }
 
     if (opt.singles.length > 1) {
-      html += `<div class="section-title">If you only go to one ${mode === 'delivery' ? 'store' : 'store'}</div><div class="card"><ul class="list">`;
+      html += `<div class="section-title">If you only use one store</div><div class="card"><ul class="list">`;
       for (const x of opt.singles) {
         html += `<li><span class="row grow">${storeDot(x.store)} ${esc(x.store.name)}</span>
-          <span class="right">${x.missingCount ? `<span class="pill warn">${x.missingCount} unpriced</span> ` : ''}<span class="money">${money(x.total)}</span></span></li>`;
+          <span class="right">${x.missingCount && x.total > 0 ? `<span class="pill warn">${x.missingCount} unpriced</span> ` : ''}${x.belowMin ? `<span class="pill warn">under min.</span> ` : ''}${x.total > 0 ? `<span class="money">${money(x.total)}</span>` : '<span class="muted small">no prices yet</span>'}</span></li>`;
       }
-      html += `</ul><p class="small muted" style="margin:6px 0 0">${mode === 'delivery' ? 'Includes delivery fees and price markups from Settings.' : 'Based on your latest receipt prices and current sales.'}</p></div>`;
+      html += `</ul><p class="small muted" style="margin:6px 0 0">${online ? 'Includes fees, tips and app markups from Settings.' : 'Based on your latest prices and current sales.'}</p></div>`;
     }
   }
 
@@ -193,20 +199,134 @@ function compareBlock(it) {
     ${rows.map((r, i) => `<div class="compare-row">
         <div class="row">${storeDot(r.store)} <strong class="${i === 0 && rows.length > 1 ? 'winner' : ''}">${esc(r.store.name)}</strong> ${r.best.onSale ? '<span class="pill sale">Sale</span>' : ''} ${i === 0 && rows.length > 1 ? '<span class="pill good">Cheapest</span>' : ''}</div>
         <div class="money right ${i === 0 && rows.length > 1 ? 'winner' : ''}">${perUnit(r.best.perUnit, it.unit)}</div>
-        <div class="small muted">${money(r.best.price)} for ${fmtQty(r.best.qty || 1, r.best.unit)} · ${ago(r.best.date)}${r.best.onSale && r.best.saleEnds ? ` · ends ${esc(r.best.saleEnds)}` : ''}${r.best.memberOnly ? ' · members' : ''}</div>
+        <div class="small muted">${money(r.best.price)} for ${fmtQty(r.best.qty || 1, r.best.unit)} · ${ago(r.best.date)}${r.best.onSale && r.best.saleEnds ? ` · ends ${esc(r.best.saleEnds)}` : ''}${r.best.memberOnly ? ' · members' : ''}${r.best.note ? ` · ${esc(r.best.note)}` : ''}
+          ${it.products?.[r.store.id] ? `<br>${esc(it.products[r.store.id])}` : ''}${it.match?.[r.store.id] && it.match[r.store.id] !== 'Exact' ? ` <span class="pill warn">${esc(it.match[r.store.id])} match</span>` : ''}${it.links?.[r.store.id] ? ` <a href="${esc(it.links[r.store.id])}" target="_blank" rel="noopener">view</a>` : ''}</div>
         <div class="small muted right">${r.best.onSale && r.best.regularPerUnit ? `reg ${perUnit(r.best.regularPerUnit, it.unit)}` : ''}</div>
       </div>`).join('')}
     ${rows.length > 1 ? `<p class="small" style="margin:8px 0 0">${esc(rows[0].store.name)} is ${Math.round((1 - rows[0].best.perUnit / rows[1].best.perUnit) * 100)}% cheaper than ${esc(rows[1].store.name)}.</p>` : ''}
-    ${missing.length ? `<p class="small muted" style="margin:6px 0 0">No price yet at ${missing.map((m) => esc(m.name)).join(', ')}.</p>` : ''}
+    ${missing.length ? `<p class="small muted" style="margin:6px 0 0">No price yet at ${missing.map((m) => esc(m.name)).join(', ')}.</p><button class="btn sm" style="margin-top:6px" data-action="lookupOne" data-item="${it.id}">🔎 Look up online</button>` : ''}
+    ${it.notes ? `<details style="margin-top:8px"><summary class="small">Notes</summary><p class="small muted" style="white-space:pre-wrap">${esc(it.notes)}</p></details>` : ''}
   </div>`;
 }
 
 // ------------------------------------------------------------------ PRICES
+function renderShowdown() {
+  const s = getState();
+  const active = s.stores.filter((st) => st.enabled !== false);
+  const sd = showdown(s.items, active, s.prices);
+  const pct = (x) => `${Math.round(Math.abs(x) * 100)}%`;
+  let html = '';
+
+  // headline per pair of stores
+  for (const p of sd.pairs) {
+    const cheaper = p.ta <= p.tb ? p.a : p.b;
+    const pricier = cheaper === p.a ? p.b : p.a;
+    const lo = Math.min(p.ta, p.tb), hi = Math.max(p.ta, p.tb);
+    html += `<div class="card">
+      <div class="row between"><div class="store-head">${storeDot(p.a)} ${esc(p.a.name)} <span class="muted small">vs</span> ${storeDot(p.b)} ${esc(p.b.name)}</div><span class="small muted">${p.n} item${p.n === 1 ? '' : 's'}</span></div>
+      <div class="vs-bar"><div style="flex:${p.aw || 0.001};background:${esc(p.a.color)}"></div><div style="flex:${Math.max(p.n - p.aw - p.bw, 0) || 0.001};background:var(--line)"></div><div style="flex:${p.bw || 0.001};background:${esc(p.b.color)}"></div></div>
+      <div class="row between small"><span>${esc(p.a.name)} cheaper on <strong>${p.aw}</strong></span><span><strong>${p.bw}</strong> at ${esc(p.b.name)}</span></div>
+      ${hi - lo > 0.005 ? `<div class="savings">Same items cost ${money(lo)} at ${esc(cheaper.name)} vs ${money(hi)} at ${esc(pricier.name)}: <strong>${pct((hi - lo) / hi)} less</strong></div>` : ''}
+    </div>`;
+  }
+  const totalItems = sd.rows.length;
+  html += `<div class="card"><div class="row between"><div><strong>${sd.compared.length}</strong> of ${totalItems} items have prices at 2+ stores</div></div>
+    <div class="bar" style="margin:8px 0"><div style="width:${totalItems ? Math.round((sd.compared.length / totalItems) * 100) : 0}%"></div></div>
+    <p class="small muted" style="margin:0 0 8px">More prices = a better answer. Scan receipts, or let Claude look up prices on store websites.</p>
+    <button class="btn sm block" data-action="fillGaps">🔎 Fill in missing prices</button></div>`;
+
+  html += `<div class="seg"><button data-action="sdf" data-k="compared" class="${showdownFilter === 'compared' ? 'on' : ''}">Compared (${sd.compared.length})</button><button data-action="sdf" data-k="missing" class="${showdownFilter === 'missing' ? 'on' : ''}">One store only (${sd.missing.length})</button></div>`;
+
+  const rows = (showdownFilter === 'compared' ? sd.compared : sd.missing).slice();
+  rows.sort((a, b) => (b.yearly || 0) - (a.yearly || 0) || (b.pctSaved || 0) - (a.pctSaved || 0) || a.item.name.localeCompare(b.item.name));
+  if (!rows.length) return html + `<div class="empty">${showdownFilter === 'compared' ? 'No items priced at two stores yet.' : 'Every item is priced at 2+ stores.'}</div>`;
+  html += `<div class="card sd-table"><div class="sd-head" style="grid-template-columns:repeat(${active.length},1fr)">${active.map((st) => `<div>${storeDot(st)} ${esc(st.name)}</div>`).join('')}</div>`;
+  for (const r of rows) {
+    html += `<button class="sd-row" data-action="itemDetail" data-item="${r.item.id}">
+      <div class="row between"><span class="ellipsis grow">${esc(r.item.name)}</span>${r.compared && r.pctSaved > 0.005 ? `<span class="pill good">${pct(r.pctSaved)} less at ${esc(r.cheapest.name)}</span>` : ''}</div>
+      <div class="sd-prices" style="grid-template-columns:repeat(${active.length},1fr)">${active.map((st) => {
+        const b = r.byStore[st.id];
+        if (!b) return `<div class="muted">—</div>`;
+        const win = r.compared && r.cheapest.id === st.id;
+        return `<div class="${win ? 'sd-win' : ''}">${perUnit(b.perUnit, r.item.unit)}${b.onSale ? ' <span class="pill sale">sale</span>' : ''}${r.item.match?.[st.id] && r.item.match[st.id] !== 'Exact' ? ' <span class="pill warn">≈</span>' : ''}</div>`;
+      }).join('')}</div>
+      ${r.yearly > 0.5 ? `<div class="small" style="color:var(--accent)">≈ ${money(r.yearly)}/yr at ${esc(r.item.frequency)} buying</div>` : ''}
+    </button>`;
+  }
+  html += `</div><p class="small muted">≈ = substitute or close match, not identical. Prices are per unit so different sizes compare fairly.</p>`;
+  return html;
+}
+
+function fillGapsSheet(onlyItemId) {
+  const s = getState();
+  const active = s.stores.filter((st) => st.enabled !== false);
+  sheet(() => {
+    const st = getState();
+    if (lookup?.loading) return `<h2>Looking up prices</h2><div class="empty"><div class="spinner"></div><p>${esc(lookup.label || 'Searching store websites…')}</p><p class="small">About a minute.</p></div>`;
+    if (lookup?.error) return `<h2>Look up prices</h2><p>${esc(lookup.error)}</p><button class="btn block" data-action="lookupReset">Back</button>`;
+    if (lookup?.results) {
+      const nf = lookup.results.filter((x) => x.found).length;
+      return `<h2>Found ${nf} price${nf === 1 ? '' : 's'} at ${esc(storeById(lookup.storeId)?.name)}</h2>
+        <p class="small muted">Check these against the store's app before relying on them.</p>
+        ${lookup.results.map((x, i) => `<div class="card" style="${x.found ? '' : 'opacity:.55'}">
+          <label class="check"><input type="checkbox" ${x.found ? 'checked' : 'disabled'} data-change="luPick" data-i="${i}"> <strong>${esc(x.item)}</strong></label>
+          ${x.found ? `<div class="small">${esc(x.product)} · <span class="money">${money(x.price)}</span> for ${fmtQty(x.size_qty, x.size_unit)}${x.on_sale ? ' <span class="pill sale">Sale</span>' : ''} <span class="pill ${x.match === 'exact' ? 'good' : 'warn'}">${esc(x.match)}</span></div>
+          <div class="small muted">${esc(x.note || '')} ${x.source_url ? `<a href="${esc(x.source_url)}" target="_blank" rel="noopener">source</a>` : ''}</div>` : `<div class="small muted">${esc(x.note || 'Not found')}</div>`}
+        </div>`).join('')}
+        <div class="btn-row"><button class="btn" data-action="lookupReset">Discard</button><button class="btn primary" data-action="lookupSave">Save checked</button></div>`;
+    }
+    const opts = active.map((x) => {
+      const missing = st.items.filter((i) => (!onlyItemId || i.id === onlyItemId) && !st.prices.some((p) => p.itemId === i.id && p.storeId === x.id));
+      return { store: x, missing };
+    });
+    return `<h2>Fill in missing prices</h2>
+      <p class="small muted">Claude searches each store's website (and Instacart listings) for the items you don't have a price for yet${s.settings.zip ? ` near ${esc(s.settings.zip)}` : ''}. Up to 15 items per search, most-bought first.</p>
+      ${opts.map((o) => `<div class="card row between"><div>${storeDot(o.store)} <strong>${esc(o.store.name)}</strong><div class="small muted">${o.missing.length} item${o.missing.length === 1 ? '' : 's'} missing</div></div>
+        <button class="btn sm" data-action="lookupRun" data-store="${o.store.id}" data-only="${onlyItemId || ''}" ${o.missing.length ? '' : 'disabled'}>Search</button></div>`).join('')}
+      ${s.settings.apiKey ? '' : '<p class="small" style="color:var(--warn)">Add your Anthropic API key in Settings first.</p>'}`;
+  });
+}
+
+let lookup = null;
+async function runLookup(storeId, onlyItemId) {
+  const s = getState();
+  const store = storeById(storeId);
+  const freqRank = { weekly: 0, biweekly: 1, monthly: 2 };
+  const missing = s.items
+    .filter((i) => (!onlyItemId || i.id === onlyItemId) && !s.prices.some((p) => p.itemId === i.id && p.storeId === storeId))
+    .sort((a, b) => (freqRank[a.frequency] ?? 9) - (freqRank[b.frequency] ?? 9) || (s.list.some((e) => e.itemId === b.id) - s.list.some((e) => e.itemId === a.id)))
+    .slice(0, 15);
+  lookup = { loading: true, storeId };
+  refreshSheet();
+  try {
+    const { lookupPrices } = await ai();
+    const r = await lookupPrices({
+      storeName: store.name,
+      zip: s.settings.zip,
+      items: missing.map((i) => {
+        const known = s.prices.filter((p) => p.itemId === i.id).sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+        return { name: i.name, wanted: i.products?.[storeId] || null, link: i.links?.[storeId] || null, brandLocked: !!i.brandLocked,
+          reference: known ? `${i.products?.[known.storeId] || ''} ${known.qty} ${known.unit}`.trim() : null };
+      }),
+      onStatus: (label) => { lookup = { ...lookup, label }; refreshSheet(); },
+    });
+    lookup = { storeId, results: r.results.map((x) => ({ ...x, keep: x.found })) };
+  } catch (e) {
+    lookup = { error: e.message };
+  }
+  refreshSheet();
+}
+
+
 let priceQuery = '';
+let priceTab = 'showdown';
+let showdownFilter = 'compared';
 function renderPrices() {
   const s = getState();
+  const seg = `<div class="seg"><button data-action="ptab" data-k="showdown" class="${priceTab === 'showdown' ? 'on' : ''}">Store showdown</button><button data-action="ptab" data-k="all" class="${priceTab === 'all' ? 'on' : ''}">All items</button></div>`;
+  if (priceTab === 'showdown' && s.items.length) return seg + renderShowdown();
   const items = searchItems(priceQuery);
-  let html = `<input type="search" placeholder="Search items…" value="${esc(priceQuery)}" data-input="priceQuery" style="margin-bottom:10px">
+  let html = seg + `<input type="search" placeholder="Search items…" value="${esc(priceQuery)}" data-input="priceQuery" style="margin-bottom:10px">
     <div class="btn-row" style="margin-bottom:12px"><button class="btn sm" data-action="addPrice">+ Add price</button><button class="btn sm" data-action="importCsv">Import from spreadsheet</button></div>`;
   if (!s.items.length) {
     return html + `<div class="empty"><p>No prices yet. Scan a receipt, add prices by hand, or import your Excel sheet (save it as CSV).</p><button class="btn" data-action="sample">Load sample data</button></div>`;
@@ -252,9 +372,31 @@ function itemDetailSheet(itemId) {
           <label class="field"><span>Category</span><select data-change="itemCat" data-item="${it.id}">${CATEGORIES.map((c) => `<option ${c === it.category ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
           <label class="field"><span>Compare price per</span><select data-change="itemUnit" data-item="${it.id}">${UNIT_OPTIONS.map((u) => `<option ${u === it.unit ? 'selected' : ''}>${u}</option>`).join('')}</select></label>
         </div>
+        <label class="field"><span>How often you buy it</span><select data-change="itemFreq" data-item="${it.id}">${['', 'weekly', 'biweekly', 'monthly'].map((f) => `<option value="${f}" ${f === (it.frequency || '') ? 'selected' : ''}>${f || 'Occasionally'}</option>`).join('')}</select></label>
         <button class="btn danger sm" data-action="delItem" data-item="${it.id}">Delete item & its prices</button>
       </details>`;
   });
+}
+
+function saveLookup() {
+  const { storeId, results } = lookup;
+  let n = 0;
+  update((s) => {
+    for (const x of results) {
+      if (!x.found || !x.keep || !(x.price > 0)) continue;
+      const it = s.items.find((i) => i.name === x.item) || findItem(x.item);
+      if (!it) continue;
+      s.prices.push({ id: uid(), itemId: it.id, storeId, price: x.price, qty: x.size_qty || 1, unit: normUnit(x.size_unit), date: today(), sale: !!x.on_sale, source: 'web lookup', note: x.product });
+      if (x.on_sale && x.regular_price) s.prices.push({ id: uid(), itemId: it.id, storeId, price: x.regular_price, qty: x.size_qty || 1, unit: normUnit(x.size_unit), date: today(), sale: false, source: 'web lookup', note: x.product });
+      it.products = { ...(it.products || {}), [storeId]: x.product };
+      if (x.match !== 'exact') it.match = { ...(it.match || {}), [storeId]: x.match === 'close' ? 'Close' : 'Substitute' };
+      if (x.source_url) it.links = { ...(it.links || {}), [storeId]: x.source_url };
+      n++;
+    }
+  });
+  lookup = null;
+  closeSheet();
+  toast(`Saved ${n} price${n === 1 ? '' : 's'}`);
 }
 
 function addPriceSheet(itemId) {
@@ -584,7 +726,7 @@ function settingsSheet() {
     </div>
     <div class="card"><h3>Trip & delivery costs</h3>
       <label class="field"><span>Cost of an extra store stop (gas + time), $</span><input type="number" step="0.5" inputmode="decimal" value="${esc(s.settings.extraStopCost)}" data-change="setExtraStop"></label>
-      <label class="field"><span>Delivery tip per order, $</span><input type="number" step="0.5" inputmode="decimal" value="${esc(s.settings.tip)}" data-change="setTip"></label>
+      <label class="field"><span>Extra tip on every delivery order, $ (per-store tips are below)</span><input type="number" step="0.5" inputmode="decimal" value="${esc(s.settings.tip)}" data-change="setTip"></label>
       <p class="small muted" style="margin:0">Splitting a trip is only recommended when it saves more than this.</p>
     </div>
     <div class="section-title">Stores</div>
@@ -596,7 +738,13 @@ function settingsSheet() {
         <label class="field"><span>Free delivery over $</span><input type="number" step="1" inputmode="decimal" value="${esc(st.freeDeliveryOver)}" data-change="storeNum" data-k="freeDeliveryOver" data-id="${st.id}"></label>
         <label class="field"><span>Delivery price markup %</span><input type="number" step="1" inputmode="decimal" value="${esc(st.deliveryMarkupPct)}" data-change="storeNum" data-k="deliveryMarkupPct" data-id="${st.id}"></label>
         <label class="field"><span>Service fee %</span><input type="number" step="0.5" inputmode="decimal" value="${esc(st.serviceFeePct)}" data-change="storeNum" data-k="serviceFeePct" data-id="${st.id}"></label>
+        <label class="field"><span>Tip per delivery $</span><input type="number" step="0.5" inputmode="decimal" value="${esc(st.tipFlat || 0)}" data-change="storeNum" data-k="tipFlat" data-id="${st.id}"></label>
+        <label class="field"><span>Order minimum $</span><input type="number" step="1" inputmode="decimal" value="${esc(st.minOrder || 0)}" data-change="storeNum" data-k="minOrder" data-id="${st.id}"></label>
+        <label class="field"><span>Pickup fee $</span><input type="number" step="0.01" inputmode="decimal" value="${esc(st.pickupFee || 0)}" data-change="storeNum" data-k="pickupFee" data-id="${st.id}"></label>
+        <label class="field"><span>Membership free delivery over $</span><input type="number" step="1" inputmode="decimal" value="${esc(st.membershipMin || 0)}" data-change="storeNum" data-k="membershipMin" data-id="${st.id}"></label>
       </div>
+      <label class="check" style="margin-bottom:8px"><input type="checkbox" ${st.membership ? 'checked' : ''} data-change="storeMember" data-id="${st.id}"> I have a delivery membership here (waives the delivery fee)</label>
+      ${st.notes ? `<p class="small muted" style="margin-top:0">${esc(st.notes)}</p>` : ''}
       <button class="btn sm danger" data-action="delStore" data-id="${st.id}">Remove store</button>
     </div>`).join('')}
     <button class="btn block" data-action="addStore">+ Add store</button>
@@ -631,6 +779,27 @@ function doCsvImport(text) {
 // ------------------------------------------------------------------ events
 const actions = {
   mode: (d) => update((s) => (s.settings.mode = d.mode)),
+  ptab: (d) => { priceTab = d.k; render(); },
+  sdf: (d) => { showdownFilter = d.k; render(); },
+  fillGaps: () => { lookup = null; fillGapsSheet(); },
+  lookupOne: (d) => { lookup = null; fillGapsSheet(d.item); },
+  lookupRun: (d) => runLookup(d.store, d.only || null),
+  lookupReset: () => { lookup = null; refreshSheet(); },
+  lookupSave: () => saveLookup(),
+  addStaples: () => {
+    let n = 0;
+    update((s) => {
+      for (const it of s.items.filter((i) => i.frequency === 'weekly')) {
+        const ex = s.list.find((e) => e.itemId === it.id);
+        if (ex && !ex.checked) continue;
+        if (ex) { ex.checked = false; n++; continue; }
+        const last = s.prices.filter((p) => p.itemId === it.id).sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+        s.list.push({ id: uid(), itemId: it.id, qty: last ? last.qty : 1, unit: last ? last.unit : it.unit, checked: false });
+        n++;
+      }
+    });
+    toast(`Added ${n} weekly staple${n === 1 ? '' : 's'}`);
+  },
   pick: (d) => {
     const input = document.querySelector(`[data-picker="${d.picker}"]`);
     update((s) => {
@@ -747,6 +916,7 @@ const changes = {
   entryUnit: (el) => update((s) => { const e = s.list.find((x) => x.id === el.dataset.id); if (e) e.unit = el.value; }),
   itemName: (el) => update((s) => { const i = s.items.find((x) => x.id === el.dataset.item); if (i && el.value.trim()) i.name = el.value.trim(); }),
   itemCat: (el) => update((s) => { const i = s.items.find((x) => x.id === el.dataset.item); if (i) i.category = el.value; }),
+  itemFreq: (el) => update((s) => { const i = s.items.find((x) => x.id === el.dataset.item); if (i) i.frequency = el.value || null; }),
   itemUnit: (el) => update((s) => { const i = s.items.find((x) => x.id === el.dataset.item); if (i) i.unit = el.value; }),
   receiptFiles: (el) => { const files = [...el.files]; if (files.length) runReceipt(files, ''); },
   rdStore: (el) => {
@@ -769,6 +939,8 @@ const changes = {
   setTip: (el) => update((s) => (s.settings.tip = Number(el.value) || 0)),
   storeName: (el) => update((s) => { const st = s.stores.find((x) => x.id === el.dataset.id); if (st && el.value.trim()) st.name = el.value.trim(); }),
   storeColor: (el) => update((s) => { const st = s.stores.find((x) => x.id === el.dataset.id); if (st) st.color = el.value; }),
+  storeMember: (el) => update((s) => { const st = s.stores.find((x) => x.id === el.dataset.id); if (st) st.membership = el.checked; }),
+  luPick: (el) => (lookup.results[el.dataset.i].keep = el.checked),
   storeEnabled: (el) => update((s) => { const st = s.stores.find((x) => x.id === el.dataset.id); if (st) st.enabled = el.checked; }),
   storeNum: (el) => update((s) => { const st = s.stores.find((x) => x.id === el.dataset.id); if (st) st[el.dataset.k] = Number(el.value) || 0; }),
   importJson: async (el) => {
