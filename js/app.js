@@ -119,6 +119,10 @@ function renderList() {
       html += `<div class="card"><div class="row between"><div class="store-head">${storeDot(g.store)} ${esc(g.store.name)}</div><div class="money">${money(g.total)}</div></div><ul class="list">`;
       for (const l of g.lines) html += listLine(l.entry, l.item, l.cost, l.best, l.byStore, g.store);
       if (g.overhead > 0.005) html += `<li class="small muted"><span class="grow">${mode === 'delivery' ? 'Delivery, service fee & tip' : mode === 'pickup' ? 'Pickup fee' + (g.overhead > (Number(g.store.pickupFee) || 0) + 0.005 ? ' + extra stop' : '') : 'Extra stop (your trip cost)'}</span><span class="money">${money(g.overhead)}</span></li>`;
+      if (mode === 'delivery' && g.store.membership) {
+        const waived = g.subtotal >= (Number(g.store.membershipMin) || 0);
+        html += `<li class="small" style="color:${waived ? 'var(--accent)' : 'var(--sale)'}">${waived ? `Delivery included in your ${esc(g.store.name)} membership${Number(g.store.membershipMonthly) ? ` (${money(g.store.membershipMonthly)}/mo)` : ''}` : `Add ${money(g.store.membershipMin - g.subtotal)} more for free member delivery`}</li>`;
+      }
       if (g.belowMin) html += `<li class="small" style="color:var(--sale)">Under ${esc(g.store.name)}'s ${money(g.store.minOrder)} minimum</li>`;
       if (online && Number(g.store.deliveryMarkupPct)) html += `<li class="small muted">Prices include ~${esc(g.store.deliveryMarkupPct)}% app markup</li>`;
       html += `</ul></div>`;
@@ -734,16 +738,17 @@ function settingsSheet() {
       <div class="row"><input type="color" value="${esc(st.color)}" data-change="storeColor" data-id="${st.id}" style="width:44px;height:44px;border:0;background:none;padding:0"><input type="text" value="${esc(st.name)}" data-change="storeName" data-id="${st.id}" class="grow"></div>
       <label class="check" style="margin:8px 0"><input type="checkbox" ${st.enabled !== false ? 'checked' : ''} data-change="storeEnabled" data-id="${st.id}"> Include when planning</label>
       <div class="fields-2">
-        <label class="field"><span>Delivery fee $</span><input type="number" step="0.01" inputmode="decimal" value="${esc(st.deliveryFee)}" data-change="storeNum" data-k="deliveryFee" data-id="${st.id}"></label>
+        <label class="field"><span>Delivery fee per order $ (without membership)</span><input type="number" step="0.01" inputmode="decimal" value="${esc(st.deliveryFee)}" data-change="storeNum" data-k="deliveryFee" data-id="${st.id}"></label>
         <label class="field"><span>Free delivery over $</span><input type="number" step="1" inputmode="decimal" value="${esc(st.freeDeliveryOver)}" data-change="storeNum" data-k="freeDeliveryOver" data-id="${st.id}"></label>
         <label class="field"><span>Delivery price markup %</span><input type="number" step="1" inputmode="decimal" value="${esc(st.deliveryMarkupPct)}" data-change="storeNum" data-k="deliveryMarkupPct" data-id="${st.id}"></label>
         <label class="field"><span>Service fee %</span><input type="number" step="0.5" inputmode="decimal" value="${esc(st.serviceFeePct)}" data-change="storeNum" data-k="serviceFeePct" data-id="${st.id}"></label>
         <label class="field"><span>Tip per delivery $</span><input type="number" step="0.5" inputmode="decimal" value="${esc(st.tipFlat || 0)}" data-change="storeNum" data-k="tipFlat" data-id="${st.id}"></label>
         <label class="field"><span>Order minimum $</span><input type="number" step="1" inputmode="decimal" value="${esc(st.minOrder || 0)}" data-change="storeNum" data-k="minOrder" data-id="${st.id}"></label>
         <label class="field"><span>Pickup fee $</span><input type="number" step="0.01" inputmode="decimal" value="${esc(st.pickupFee || 0)}" data-change="storeNum" data-k="pickupFee" data-id="${st.id}"></label>
-        <label class="field"><span>Membership free delivery over $</span><input type="number" step="1" inputmode="decimal" value="${esc(st.membershipMin || 0)}" data-change="storeNum" data-k="membershipMin" data-id="${st.id}"></label>
+        <label class="field"><span>Member free delivery on orders over $</span><input type="number" step="1" inputmode="decimal" value="${esc(st.membershipMin || 0)}" data-change="storeNum" data-k="membershipMin" data-id="${st.id}"></label>
       </div>
-      <label class="check" style="margin-bottom:8px"><input type="checkbox" ${st.membership ? 'checked' : ''} data-change="storeMember" data-id="${st.id}"> I have a delivery membership here (waives the delivery fee)</label>
+      <label class="check" style="margin-bottom:8px"><input type="checkbox" ${st.membership ? 'checked' : ''} data-change="storeMember" data-id="${st.id}"> I have a delivery membership here (unlimited free delivery)</label>
+      ${st.membership ? `<label class="field"><span>Membership cost per month $ (flat, not per order)</span><input type="number" step="0.01" inputmode="decimal" value="${esc(st.membershipMonthly || 0)}" data-change="storeNum" data-k="membershipMonthly" data-id="${st.id}"></label>` : ''}
       ${st.notes ? `<p class="small muted" style="margin-top:0">${esc(st.notes)}</p>` : ''}
       <button class="btn sm danger" data-action="delStore" data-id="${st.id}">Remove store</button>
     </div>`).join('')}
@@ -1041,6 +1046,13 @@ $('#settingsBtn').addEventListener('click', settingsSheet);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 
+update((s) => {
+  const wf = s.stores.find((x) => x.id === 'wf');
+  if (wf && wf.membership && wf.membershipMonthly == null) {
+    wf.membershipMonthly = 9.99;
+    wf.notes = 'Grocery delivery subscription: $9.99/month for unlimited free delivery on orders $25+. Without it, $9.95 per delivery with Prime. Pickup free.';
+  }
+});
 render();
 importFromLink();
 

@@ -9,7 +9,7 @@ export const CATEGORIES = ['Produce', 'Dairy & Eggs', 'Meat & Seafood', 'Bakery'
 const DEFAULT_STATE = () => ({
   version: 1,
   stores: [
-    { id: 'wf', name: 'Whole Foods', color: '#00674b', enabled: true, deliveryFee: 9.95, serviceFeePct: 0, deliveryMarkupPct: 0, freeDeliveryOver: 0, pickupFee: 0, tipFlat: 0, minOrder: 0, membership: false, membershipMin: 25 },
+    { id: 'wf', name: 'Whole Foods', color: '#00674b', enabled: true, deliveryFee: 9.95, serviceFeePct: 0, deliveryMarkupPct: 0, freeDeliveryOver: 0, pickupFee: 0, tipFlat: 0, minOrder: 0, membership: false, membershipMin: 25, membershipMonthly: 9.99 },
     { id: 'aldi', name: 'Aldi', color: '#00448f', enabled: true, deliveryFee: 3.99, serviceFeePct: 5, deliveryMarkupPct: 15, freeDeliveryOver: 0, pickupFee: 1.99, tipFlat: 0, minOrder: 35, membership: false, membershipMin: 35 },
     { id: 'giant', name: 'Giant', color: '#e4002b', enabled: true, deliveryFee: 7.95, serviceFeePct: 0, deliveryMarkupPct: 0, freeDeliveryOver: 0, pickupFee: 0, tipFlat: 7, minOrder: 60, membership: false, membershipMin: 0 },
   ],

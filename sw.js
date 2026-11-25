@@ -1,5 +1,5 @@
 // Offline support: serve the app shell from cache, refresh it in the background.
-const CACHE = 'gp-v3';
+const CACHE = 'gp-v4';
 const SHELL = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png',
   'js/app.js', 'js/store.js', 'js/optimize.js', 'js/units.js', 'js/csv.js', 'js/ai.js', 'vendor/anthropic-sdk.js',
