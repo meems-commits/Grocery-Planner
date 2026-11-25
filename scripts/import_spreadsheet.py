@@ -3,7 +3,7 @@
 into a Grocery Planner backup (.json) that the app can load via
 Settings -> Import backup.
 
-    python3 scripts/import_spreadsheet.py path/to/workbook.xlsx -o grocery-planner-import.json
+    python3 scripts/import_spreadsheet.py path/to/workbook.xlsx -o grocery-planner-import.json --member wf
 
 Sheets read: Cart Comparison, Giant Matches, Giant Receipts, Whole Foods Receipts.
 Requires: openpyxl
@@ -80,6 +80,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("xlsx")
     ap.add_argument("-o", "--out", default="grocery-planner-import.json")
+    ap.add_argument("--member", action="append", default=[], choices=["wf", "aldi", "giant"],
+                    help="store where you have a delivery membership (repeatable)")
     a = ap.parse_args()
 
     wb = openpyxl.load_workbook(a.xlsx, data_only=True)
@@ -99,6 +101,9 @@ def main():
          "pickupFee": 0, "tipFlat": 7, "minOrder": 60, "membership": False, "membershipMin": 0,
          "notes": "Delivery $7.95, $60 minimum, you tip $7/order. Delivery markup unconfirmed."},
     ]
+
+    for st in stores:
+        st["membership"] = st["id"] in a.member
 
     items, prices = [], []
     by_giant_name = {}  # Giant decoded product name -> item
